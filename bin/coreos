@@ -1,11 +1,19 @@
 #!/usr/bin/env ruby
-# -*- mode: ruby -*-
 
-require 'thor'
-
-class MyCLI < Thor
-  desc "deploy HOST", "deploys all services in ./coreos/HOST/*.service to HOST"
-  def deploy(host)
-    puts "Hello #{host}"
-  end
+begin
+  require 'thor'
+rescue
+  require 'rubygems'
+  require 'thor'
 end
+
+
+
+class CoreOS < Thor
+  desc "deploy HOST", "deploys all services in ./coreos/HOST/*.service to HOST"
+  def deploy(host)
+    puts "Hello #{host}!!!"
+  end
+end
+
+CoreOS.start(ARGV)
