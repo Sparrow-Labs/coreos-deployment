@@ -1,18 +1,89 @@
 #!/usr/bin/env ruby
 
-begin
-  require 'thor'
-rescue
-  require 'rubygems'
-  require 'thor'
+require 'thor'
+require 'net/ssh'
+
+def loop_ssh_command(ssh, command)
+  puts "==> #{command}"
+  ssh.exec command
+  ssh.loop
 end
-
-
 
 class CoreOS < Thor
   desc "deploy HOST", "deploys all services in ./coreos/HOST/*.service to HOST"
   def deploy(host)
-    puts "Hello #{host}!!!"
+    directories = Dir.entries("./coreos").select { |s| s.start_with? host }
+    puts directories
+    if directories.count == 1
+      host = directories[0]
+    end
+
+    base_directory = "./coreos/#{host}"
+    abort "Directory '#{base_directory}' does not exist" unless File.exists? base_directory
+
+    service_files = Dir.entries(base_directory).select { |s| s.end_with? ".service" }
+    abort "No service files found for #{host}" unless service_files.count > 0
+
+    login = nil
+    images = []
+    for file in service_files
+      path = "#{base_directory}/#{file}"
+      content = File.open(path, "rb").read
+      images << content.scan(/docker pull (.*)/).flatten
+
+      logins = content.scan(/docker login (.*)/).flatten
+      if logins.count > 0
+        login = logins[0]
+      end
+    end
+
+    images = images.flatten.uniq
+    abort "no docker image found to pull" unless images.count > 0
+
+    puts "==> Copying service files"
+    system "scp #{base_directory}/*.service #{host}:"
+
+    Net::SSH.start("#{host}", ENV['USER'] ) do |ssh|
+      if login
+        loop_ssh_command ssh, "docker login #{login}"
+      end
+
+      for image in images
+        puts "==> docker pull #{image}"
+        ssh.exec! "docker pull #{image}"
+        ssh.loop
+      end
+
+      start_services = []
+      restart_services = []
+
+      for service in service_files
+        exists = ssh.exec!("test -e /etc/systemd/system/#{service} && echo 1 || echo 0")
+        ssh.exec! "sudo mv #{service} /etc/systemd/system/"
+
+        if exists.to_i == 1
+          restart_services << service
+        else
+          start_services << service
+        end
+      end
+
+      for service in start_services
+        loop_ssh_command ssh, "sudo systemctl enable /etc/systemd/system/#{service}"
+      end
+
+      if restart_services.count > 0
+        loop_ssh_command ssh, "sudo systemctl daemon-reload"
+      end
+
+      if start_services.count > 0
+        loop_ssh_command ssh, "sudo systemctl start #{start_services.join " "}"
+      end
+
+      if restart_services.count > 0
+        loop_ssh_command ssh, "sudo systemctl restart #{restart_services.join " "}"
+      end
+    end
   end
 end
 
