@@ -11,9 +11,11 @@ end
 
 class CoreOS < Thor
   desc "deploy HOST", "deploys all services in ./coreos/HOST/*.service to HOST"
+  option :services, :type => :array
+
   def deploy(host)
+    abort "./coreos does not exist" unless File.exists? "./coreos"
     directories = Dir.entries("./coreos").select { |s| s.start_with? host }
-    puts directories
     if directories.count == 1
       host = directories[0]
     end
@@ -22,6 +24,18 @@ class CoreOS < Thor
     abort "Directory '#{base_directory}' does not exist" unless File.exists? base_directory
 
     service_files = Dir.entries(base_directory).select { |s| s.end_with? ".service" }
+
+    if options[:services]
+      service_files = service_files.select { |service|
+        found = false
+        for prefix in options[:services]
+          found = true if service.start_with? prefix
+        end
+
+        found
+      }
+    end
+
     abort "No service files found for #{host}" unless service_files.count > 0
 
     login = nil
@@ -40,7 +54,7 @@ class CoreOS < Thor
     images = images.flatten.uniq
     abort "no docker image found to pull" unless images.count > 0
 
-    puts "==> Copying service files"
+    puts "==> Copying service files to #{host}"
     system "scp #{base_directory}/*.service #{host}:"
 
     Net::SSH.start("#{host}", ENV['USER'] ) do |ssh|
