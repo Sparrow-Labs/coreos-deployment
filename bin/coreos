@@ -10,7 +10,7 @@ def loop_ssh_command(ssh, command)
 end
 
 class CoreOS < Thor
-  desc "deploy HOST", "deploys all services in ./coreos/HOST/*.service to HOST"
+  desc "deploy HOST", "deploys all services in ./coreos/$HOST/*.service to HOST"
   option :services, :type => :array
 
   def deploy(host)
@@ -57,7 +57,7 @@ class CoreOS < Thor
     puts "==> Copying service files to #{host}"
     system "scp #{base_directory}/*.service #{host}:"
 
-    Net::SSH.start("#{host}", ENV['USER'] ) do |ssh|
+    Net::SSH.start(host, ENV['USER']) do |ssh|
       if login
         loop_ssh_command ssh, "docker login #{login}"
       end
@@ -97,6 +97,34 @@ class CoreOS < Thor
       if restart_services.count > 0
         loop_ssh_command ssh, "sudo systemctl restart #{restart_services.join " "}"
       end
+    end
+  end
+
+  desc "logs HOSTS", "attaches to journalctl logs for services in HOSTS"
+  def logs(*hosts)
+    abort "./coreos does not exist" unless File.exists? "./coreos"
+    directories = Dir.entries("./coreos").select { |s| s.start_with? *hosts }
+    hosts = directories.map { |d| File.basename d }
+
+    connections = []
+
+    for host in hosts
+      base_directory = "./coreos/#{host}"
+      abort "Directory '#{base_directory}' does not exist" unless File.exists? base_directory
+
+      service_files = Dir.entries(base_directory).select { |s| s.end_with? ".service" }
+      services = service_files.map { |s| File.basename s }
+
+      puts "#{host} ==> #{services}"
+      connections << Net::SSH.start(host, ENV['USER'])
+      connections.last.exec "sudo journalctl -f -u #{services.join " -u "}"
+    end
+
+    condition = Proc.new { |s| s.busy? }
+
+    loop do
+      connections.delete_if { |ssh| !ssh.process(0.1, &condition) }
+      break if connections.empty?
     end
   end
 end
